@@ -14,7 +14,7 @@
 void sender_sync_send(long message_size, long repetitions, long delta, long max)
 {
 	struct timespec tstamp = { 0,0 };
-	uint8_t* data = 0;
+	char* data = 0;
 
 	struct timespec trecv = { 0,0 };
 
@@ -22,8 +22,9 @@ void sender_sync_send(long message_size, long repetitions, long delta, long max)
 	for (; message_size <= max; message_size *= delta)
 	{
 		double s = 0;
-		data = calloc(message_size, sizeof(uint8_t));
-		for (long _ = 0; _ < repetitions; _++)
+		data = calloc(message_size, sizeof(char));
+        long i;
+        for (i = 0; i < repetitions; i++)
 		{
 			MPI_Barrier(MPI_COMM_WORLD); // sync sender with receiver before send
             clock_gettime(CLOCK_MONOTONIC, &tstamp); // closest to real send timestamp
@@ -41,7 +42,7 @@ void sender_sync_send(long message_size, long repetitions, long delta, long max)
 void sender_buffered_send(long message_size, long repetitions, long delta, long max)
 {
 	struct timespec tstamp = { 0,0 };
-	uint8_t* data = 0;
+	char* data = 0;
 
 	struct timespec trecv = { 0,0 };
 
@@ -49,7 +50,7 @@ void sender_buffered_send(long message_size, long repetitions, long delta, long 
 	for (; message_size <= max; message_size *= delta)
 	{
 		double s = 0;
-		data = calloc(message_size, sizeof(uint8_t));
+		data = calloc(message_size, sizeof(char));
 
 		int buffer_size;
 		MPI_Pack_size(message_size, MPI_BYTE, MPI_COMM_WORLD, &buffer_size);
@@ -58,7 +59,8 @@ void sender_buffered_send(long message_size, long repetitions, long delta, long 
 
 		MPI_Buffer_attach(buf, buffer_size);
 
-		for (long _ = 0; _ < repetitions; _++)
+        long i;
+        for (i = 0; i < repetitions; i++)
 		{
 			MPI_Barrier(MPI_COMM_WORLD); // sync sender with receiver before send
             clock_gettime(CLOCK_MONOTONIC, &tstamp); // closest to real send timestamp
@@ -83,12 +85,13 @@ void sender_buffered_send(long message_size, long repetitions, long delta, long 
 void receiver_recv(long message_size, long repetitions, long delta, long max)
 {
 	struct timespec tstamp = { 0,0 };
-	uint8_t* data = 0;
+	char* data = 0;
 
 	for (; message_size <= max; message_size *= delta)
 	{
-		data = calloc(message_size, sizeof(uint8_t));
-		for (long _ = 0; _ < repetitions; _++)
+		data = calloc(message_size, sizeof(char));
+        long i;
+        for (i = 0; i < repetitions; i++)
 		{
 			MPI_Barrier(MPI_COMM_WORLD);// sync sender with receiver before recv
 			MPI_Recv(data, message_size, MPI_BYTE, sender, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);

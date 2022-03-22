@@ -58,7 +58,7 @@ int main(int argc, char* argv[]) {
 	unsigned long long local_inside = calculate_inside_points(local_points);
 	double local_pi = 4 * ((double)local_inside / (double)local_points);
 
-	printf("Local PI for process %ld is %lf | npoints = %ld\n", world_rank, local_pi, local_points);
+	// printf("Local PI for process %ld is %lf | npoints = %ld\n", world_rank, local_pi, local_points);
 
 	unsigned long long global_inside;
 	MPI_Reduce(&local_inside, &global_inside, 1, MPI_UINT64_T, MPI_SUM, 0,

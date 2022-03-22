@@ -8,7 +8,7 @@
 struct point {
 	float x;
 	float y;
-} point;
+};
 
 struct point random_point() {
 	struct point p = {
@@ -49,7 +49,7 @@ int main(int argc, char* argv[]) {
 	unsigned long long num_points = strtoul(argv[1], NULL, 10);
 	struct timespec tstamp = { 0,0 };
 	struct timespec trecv = { 0,0 };
-	timespec_get(&trecv, TIME_UTC);
+    clock_gettime(CLOCK_MONOTONIC, &trecv);
 
 
 	unsigned long long local_points = num_points / world_size;
@@ -65,7 +65,7 @@ int main(int argc, char* argv[]) {
 		MPI_COMM_WORLD);
 
 	if (world_rank == root) {
-		timespec_get(&tstamp, TIME_UTC);
+        clock_gettime(CLOCK_MONOTONIC, &tstamp);
 		double global_pi = 4 * ((double)global_inside / (double)num_points);
 		double s = ((double)tstamp.tv_sec + 1.0e-9 * tstamp.tv_nsec) - ((double)trecv.tv_sec + 1.0e-9 * trecv.tv_nsec);
 		printf("Global PI is %lf | calculated in %fs\n", global_pi, s);

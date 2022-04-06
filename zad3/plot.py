@@ -138,12 +138,12 @@ def draw_heatmap(threads, chunk_size, data, title, fmt, schedule, size, type, cb
 
 def plot(threads, chunk_size, time, speedup, schedule, size):
     ## TIME
-    draw_heatmap(threads, chunk_size, time * (10 ** 6),
-                 f"Time for {schedule} with {size} values", "{x:.0f} ms"
+    draw_heatmap(threads, chunk_size, time * (10 ** 3),
+                 f"Time for {schedule} with {size} values", "{x:.3f} ms"
                  , schedule, size, "time", "time [ms]")
     ## SPEEDUP
     draw_heatmap(threads, chunk_size, speedup,
-                 f"Speedup for {schedule} with {size} values", "{x:.4f}"
+                 f"Speedup for {schedule} with {size} values", "{x:.3f}"
                  , schedule, size, "speedup", "speedup value")
 
 

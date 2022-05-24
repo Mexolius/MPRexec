@@ -4,16 +4,20 @@
 #include <string>
 #include <memory>
 #include <deque>
+#include <numeric>
+#include <vector>
 
-const size_t SIZE = 8;
+const size_t SIZE = 100;
 const float MAX = 200.0f;
-size_t THREAD_COUNT = 2;
-size_t BUCKETS_PER_THREAD = 2;
+size_t THREAD_COUNT = 4;
+size_t BUCKETS_PER_THREAD = 4;
 
 void print_arr(float *arr, const int size) {
+	std::cout << "[";
 	for (int64_t i = 0; i < size; i++) {
-		std::cout << arr[i] << " ";
+		std::cout << arr[i] << ", ";
 	}
+	std::cout << "]" << std::endl;
 }
 
 void randomize_static(float *values, size_t size, int thread_num, int chunk_size) {
@@ -235,6 +239,7 @@ private:
 	std::unique_ptr<bucket_t[]> buckets;
 	size_t bucket_count;
 	float bucket_size;
+	size_t total_size = 0;
 public:
 	buckets_t(size_t bucket_count, size_t bucket_capacity, float bucket_size)
 		: buckets(std::make_unique<bucket_t[]>(bucket_count))
@@ -251,6 +256,7 @@ public:
 		if (bucket_index >= bucket_count)
 			throw std::runtime_error("Bucket index out of range!");
 		buckets[bucket_index].insert(value);
+		total_size++;
 	}
 
 	void sort() {
@@ -259,8 +265,12 @@ public:
 		}
 	}
 
+	size_t get_total_size() const {
+		return total_size;
+	}
+
 	std::unique_ptr<float[]> merge() {
-		auto ret = std::make_unique<float[]>(SIZE);
+		auto ret = std::make_unique<float[]>(total_size);
 		auto ptr = ret.get();
 		size_t i = 0;
 		for (size_t b = 0; b < size(); b++) {
@@ -287,70 +297,236 @@ std::ostream& operator<<(std::ostream& o, const buckets_t& buckets)
 	size_t i = 0;
 	for (auto b : buckets)
 	{
-		//if(b.size()>1)
-			o << '{' << i << '}' << " -> " << b << '\n';
+		o << '{' << i << " [" << buckets.get_total_size() << "] " << '}' << " -> " << b << '\n';
 		i++;
 	}
 	return o;
 }
 
-int main() {
-	std::unique_ptr<float[]> values = std::make_unique<float[]>(SIZE);
+double calc_time_whole(size_t thread_count, size_t size, size_t buckets_per_thread) {
+	std::unique_ptr<float[]> values = std::make_unique<float[]>(size);
+	float bucket_size = static_cast<float>(200.0f / thread_count);
 
-	randomize_guided(values.get(), SIZE, 4, 64);
+	std::unique_ptr<size_t[]> sizes = std::make_unique<size_t[]>(thread_count);
+	std::unique_ptr<size_t[]> start_points = std::make_unique<size_t[]>(thread_count);
 
-	float bucket_size;
-	size_t thread_count = THREAD_COUNT;
+	double start = omp_get_wtime();
 
-	std::unique_ptr<float[]> shared_result = std::make_unique<float[]>(SIZE);
-	float* values_ptr = values.get();;
+	randomize_guided(values.get(), size, thread_count, 64);
+
 #pragma omp parallel num_threads(thread_count)
 	{
-
-#pragma omp single
-		{
-			bucket_size = static_cast<float>(200.0f / thread_count);
-		}
-
 		int thread_num = omp_get_thread_num();
 		float bucket_start = static_cast<float>(bucket_size * thread_num);
-		float bucket_end = static_cast<float>(bucket_size * (1+thread_num));
-		float thread_bucket_size = static_cast<float>(bucket_size / BUCKETS_PER_THREAD);
-		size_t start_point = static_cast<size_t>(SIZE * thread_num / thread_count);
+		float bucket_end = static_cast<float>(bucket_size * (1 + thread_num));
+		float thread_bucket_size = static_cast<float>(bucket_size / buckets_per_thread);
+		size_t start_point = static_cast<size_t>(size * thread_num / thread_count);
 
 		auto bucket_selector = [&bucket_start](float v, float bucket_size)
 		{
 			return static_cast<size_t>((v - bucket_start) / bucket_size);
 		};
 
-		buckets_t buckets{ BUCKETS_PER_THREAD, SIZE, thread_bucket_size };
+		size_t buck_size = 2*size / buckets_per_thread;
 
+		buckets_t buckets{ buckets_per_thread, buck_size, thread_bucket_size };
 
-		size_t i = start_point;
-#pragma omp for
-		for (int j = 0; j < SIZE; j++) {
-			if( values_ptr[i] > bucket_start && values_ptr[i] < bucket_end)
-				buckets.insert(values_ptr[i], bucket_selector);
-			i = (i + 1) % SIZE;
+		for (int j = 0; j < size; j++) {
+			size_t pos = (j + start_point) % size;
+			if (bucket_start < values[pos] && values[pos] < bucket_end) {
+				buckets.insert(values[pos], bucket_selector);
+			}
 		}
 
 		buckets.sort();
-	
+
 		std::unique_ptr<float[]> result = buckets.merge();
 
-		
-		
-#pragma omp for
-		for (int i = 0; i < buckets.size(); i++) {
-			shared_result[i + start_point] = result[i];
-		}
+		sizes[thread_num] = buckets.get_total_size();
 
-		std::cout << "Thread " << thread_num << " done" << std::endl;
-
+#pragma omp barrier
 #pragma omp single
 		{
-			print_arr(result.get(), SIZE);
+			start_points[0] = 0;
+			for (int i = 1; i < thread_count; i++) {
+				start_points[i] = start_points[i - 1] + sizes[i - 1];
+			}
 		}
+
+		size_t from = start_points[thread_num];
+
+		for (size_t i = 0; i < buckets.get_total_size(); i++) {
+			values[i + from] = result[i];
+		}
+	}
+	double end = omp_get_wtime();
+
+	//print_arr(values.get(), size);
+	return end - start;
+}
+
+void calc_time_partitioned(size_t thread_count, size_t size, size_t buckets_per_thread, double* result_times) {
+	std::unique_ptr<float[]> values = std::make_unique<float[]>(size);
+	float bucket_size = static_cast<float>(200.0f / thread_count);
+
+	std::unique_ptr<float[]> result_arr_uni = std::make_unique<float[]>(size);
+	std::unique_ptr<size_t[]> sizes = std::make_unique<size_t[]>(thread_count);
+	std::unique_ptr<size_t[]> start_points = std::make_unique<size_t[]>(thread_count);
+
+	double start = omp_get_wtime();
+
+	randomize_guided(values.get(), size, thread_count, 64);
+
+	double randomized = omp_get_wtime();
+
+	double assorted, sorted, in_result, merged;
+
+#pragma omp parallel num_threads(thread_count)
+	{
+		int thread_num = omp_get_thread_num();
+		float bucket_start = static_cast<float>(bucket_size * thread_num);
+		float bucket_end = static_cast<float>(bucket_size * (1 + thread_num));
+		float thread_bucket_size = static_cast<float>(bucket_size / buckets_per_thread);
+		size_t start_point = static_cast<size_t>(size * thread_num / thread_count);
+
+		auto bucket_selector = [&bucket_start](float v, float bucket_size)
+		{
+			return static_cast<size_t>((v - bucket_start) / bucket_size);
+		};
+
+		size_t buck_size = 2*size/ buckets_per_thread;
+
+
+		buckets_t buckets{ buckets_per_thread, buck_size, thread_bucket_size };
+
+		for (int j = 0; j < size; j++) {
+			size_t pos = (j + start_point) % size;
+			if (bucket_start < values[pos] && values[pos] < bucket_end) {
+				buckets.insert(values[pos], bucket_selector);
+			}
+		}
+#pragma omp barrier
+#pragma omp single
+		{
+			assorted = omp_get_wtime();
+		}
+
+		buckets.sort();
+#pragma omp barrier
+#pragma omp single
+		{
+			sorted = omp_get_wtime();
+		}
+
+		std::unique_ptr<float[]> result = buckets.merge();
+
+		sizes[thread_num] = buckets.get_total_size();
+
+#pragma omp barrier
+#pragma omp single
+		{
+			merged = omp_get_wtime();
+			start_points[0] = 0;
+			for (int i = 1; i < thread_count; i++) {
+				start_points[i] = start_points[i - 1] + sizes[i - 1];
+			}
+		}
+
+		size_t from = start_points[thread_num];
+
+		for (size_t i = 0; i < buckets.get_total_size(); i++) {
+			result_arr_uni[i + from] = result[i];
+		}
+	}
+
+	//print_arr(values.get(), size);
+	double end = omp_get_wtime();
+
+	result_times[0] = randomized - start;
+	result_times[1] = assorted - randomized;
+	result_times[2] = sorted - assorted;
+	result_times[3] = merged - sorted;
+	result_times[4] = end - merged;
+}
+
+void test_whole_buckets(int threads,int size, int start, int step, int max, int reps = 10) {
+	// SINGLE Thread TESTS
+	for (int i = start; i < max; i*= step) {
+		
+		std::vector<double> times(reps);
+		for (int r = 0; r < reps; r++) {
+			times[r] = calc_time_whole(threads, size, i);
+		}
+		double sum = std::accumulate(times.begin(), times.end(), 0.0);
+		double mean = sum / reps;
+
+		double sq_sum = std::inner_product(times.begin(), times.end(), times.begin(), 0.0);
+		double stdev = std::sqrt(sq_sum / times.size() - mean * mean);
+
+		std::cout << threads << "," << size << "," << i*threads << "," << mean << "," << stdev << std::endl;
+	}
+}
+
+void test_whole_size(int threads, int buckets, int start, int step, int max, int reps = 10) {
+	// SINGLE Thread TESTS
+	for (int i = start; i < max; i *= step) {
+
+		std::vector<double> times(reps);
+		for (int r = 0; r < reps; r++) {
+			times[r] = calc_time_whole(threads, i, buckets/threads);
+		}
+		double sum = std::accumulate(times.begin(), times.end(), 0.0);
+		double mean = sum / reps;
+
+		double sq_sum = std::inner_product(times.begin(), times.end(), times.begin(), 0.0);
+		double stdev = std::sqrt(sq_sum / times.size() - mean * mean);
+
+		std::cout << threads << "," << i << "," << buckets << "," << mean << "," << stdev << std::endl;
+	}
+}
+
+void test_partial(int threads, int buckets, int start, int step, int max, int reps = 10) {
+	// SINGLE Thread TESTS
+	for (int i = start; i < max; i *= step) {
+
+		std::vector<std::unique_ptr<double[]>> times(reps);
+		for (int r = 0; r < reps; r++) {
+			times[r] = std::make_unique<double[]>(5);
+			calc_time_partitioned(threads, i, buckets/threads, times[r].get());
+		}
+
+		double means[5] = { 0.0 };
+		for (auto &v : times) {
+			for (int i = 0; i < 5; i++) {
+				means[i] += v[i];
+			}
+		}
+
+		for (int i = 0; i < 5; i++) {
+			means[i] /= reps;
+		}
+
+		std::cout << threads << "," << i << "," << buckets << ",";
+		for (int i = 0; i < 5; i++) {
+			std::cout << means[i] << ",";
+		}
+		std::cout << std::endl;
+	}
+}
+
+int main() {
+	//test_whole_buckets(1, 100000, 10, 2, 5000);
+	//test_whole_buckets(1, 1000000, 100, 2, 20000);
+	//test_whole_buckets(1, 6000000, 1000, 2, 40000);
+
+	int thread_counts[] = { 1,2,3,4 };
+
+	for (auto &tc : thread_counts) {
+		//test_whole_size(tc, 1920, 50000, 2, 6400001);
+	}
+
+	for (auto &tc : thread_counts) {
+		test_partial(tc, 1920, 50000, 2, 6400001);
 	}
 
 	return 0;

@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 const process = require('process')
 
 const regExp = /[ \t\n\r]+/;
